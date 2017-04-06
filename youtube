@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+
+import sys
+from sys import argv
+from urllib import request
+import re
+from html.parser import HTMLParser
+import youtube_dl
+import subprocess
+
+def help():
+    print('''usage: {} <query> [(-a|--audio|-v|--video)] [(-p|--play) [<playspec>]]
+Search and play for videos/tracks/playlists in YouTube and SoundCloud
+
+Default format is audio
+
+PLAYSPEC
+    Syntax: <element>[,<element>...]
+    Default: 1-10
+    Example: 1,2a,3-5v,6:3_,7a:1.3.5
+
+ELEMENT
+    Syntax: <index>[(a|v)]
+         or <index>-[<index>][(a|v)]
+         or <index>[(a|v)][:<PLAYLISTINDEX>]
+    a or v override global format
+    Examples:
+        4           # 4th element
+        5-7a        # Audio for elements 5,6,7 (track/video/playlist[1-10])
+        10v:2_4.6_8 # Video for playlist[2-4,6-8] at 10th element
+
+PLAYLISTSPEC
+    Syntax: (a|all|<subrange>[.<subrange>])
+    Default: 1_10
+    Example: 1.3_5.7_   # Sub-elements 1,3,4,5,7,8,...
+
+SUBRANGE
+    Syntax: <subindex>[_<subindex>]
+
+'''.format(argv[0]))
+    sys.exit(0)
+
+if len(argv) < 2:
+    help()
+
+query = []
+video = False
+play = False
+playspec = None
+
+while len(argv) > 1:
+    s = argv[1]
+    if s[0] == "-":
+        if   s in ["-h", "--help"]: help()
+        elif s in ["-a", "--audio"]: video = False
+        elif s in ["-v", "--video"]: video = True
+        elif s in ["-p", "--play"]:
+            play = True
+            if len(argv) < 3 or argv[2][0] == "-":
+                playspecstr = "1-10"
+            else:
+                playspecstr = argv[2]
+                argv[2:] = argv[3:]
+        else:
+            help()
+    else:
+        query.append(s)
+    argv = argv[1:]
+
+query = "+".join(query)
+
+maxelem = 20
+
+lastsearchfilename = "/tmp/last-youtube-search"
+usedlastsearch = False
+if play:
+    with open(lastsearchfilename, "r") as lastsearch:
+        lastquery = lastsearch.readline()
+        if lastquery == query + "\n":
+            usedlastsearch = True
+            youtube = lastsearch.read()
+
+if not usedlastsearch:
+    youtubeprefix = "https://www.youtube.com/results?search_query="
+    youtuberequest = request.urlopen(youtubeprefix + query)
+    youtube = str(youtuberequest.read())
+    with open(lastsearchfilename, "w") as lastsearch:
+        lastsearch.write(query + "\n")
+        lastsearch.write(youtube)
+
+ytcutpatt = re.compile("<a href=\"/watch")
+youtube = ytcutpatt.sub("\n", youtube)
+
+htmlparser = HTMLParser()
+urlpatt = re.compile("[^\"]*")
+titlepatt = re.compile("title=\"[^\"]*")
+urls = []
+titles = []
+isplaylist = []
+for line in youtube.split("\n", 14)[1:]:
+    url = "http://www.youtube.com/watch" + \
+          urlpatt.match(line)[0]
+    if url not in urls:
+        urls.append(url)
+        isplaylist.append(";list=" in url)
+        title = titlepatt.search(line, 100)[0][7:]
+        title = htmlparser.unescape(title)
+        titles.append(title)
+
+if not play:
+    for n, title in enumerate(titles):
+        print("{} - {}".format(n+1, title))
+else:
+    playspec = []
+    for rng in playspecstr.split(","):
+        if "-" not in rng:
+            if ":" in rng:
+                splt = rng.split(":", 2)
+                left = splt[0]
+                subvideo = video
+                if left[-1] in "av":
+                    subvideo = index[-1] == "v"
+                    left = left[:-1]
+                index = int(left) - 1
+                if not isplaylist[index]:
+                    print("index={} is not a playlist".format(index))
+                    sys.exit(1)
+                playlistspec = splt[1].replace(".", ",").replace("_", "-")
+                playspec.append({
+                    "id": index,
+                    "video": subvideo,
+                    "playlist": playlistspec
+                    })
+            else:
+                subvideo = video
+                if rng[-1] in "av":
+                    subvideo = rng[-1] == "v"
+                    rng = rng[:-1]
+                index = int(rng) - 1
+                playspec.append({
+                    "id": index,
+                    "video": subvideo,
+                    })
+                if isplaylist[index]:
+                    playspec[-1]["playlist"] = "1-10"
+        else:
+            rngl = rng.split("-", 2)
+            start = int(rngl[0]) - 1
+            right = rngl[1]
+            subvideo = video
+            if right[-1] in "av":
+                subvideo = right[-1] == "v"
+                right = right[:-1]
+            if len(right) == 0:
+                end = len(urls)
+            else:
+                end = int(right)
+            for index in range(start, end):
+                playspec.append({
+                    "id": index,
+                    "video": subvideo
+                    })
+                if isplaylist[index]:
+                    playspec[-1]["playlist"] = "1-10"
+    playlistfilename = "tmp/playlist-youtube"
+    with open(playlistfilename, "w") as playlist:
+        for track in playspec:
+            print(titles[track["id"]])
+            ydl_opts = {
+                    "format": "bestaudio",
+                    "simulate": True
+                }
+            if track["video"]:
+                ydl_opts["format"] = "best"
+            with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(urls[track["id"]], download=False)
+                playlist.write(info["formats"][0]["url"])
+                playlist.write("\n")
+    subprocess.call(["mplayer", "-playlist", playlistfilename])
