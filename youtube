@@ -72,6 +72,8 @@ query = "+".join(query)
 maxelem = 20
 
 lastsearchfilename = "/tmp/last-youtube-search"
+playlistfilename = "/tmp/playlist-youtube"
+
 usedlastsearch = False
 if play:
     with open(lastsearchfilename, "r") as lastsearch:
@@ -162,18 +164,20 @@ else:
                     })
                 if isplaylist[index]:
                     playspec[-1]["playlist"] = "1-10"
-    playlistfilename = "tmp/playlist-youtube"
     with open(playlistfilename, "w") as playlist:
         for track in playspec:
             print(titles[track["id"]])
             ydl_opts = {
-                    "format": "bestaudio",
-                    "simulate": True
+                    "simulate": True,
+                    "quiet": True
                 }
-            if track["video"]:
-                ydl_opts["format"] = "best"
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(urls[track["id"]], download=False)
-                playlist.write(info["formats"][0]["url"])
+                fmtindex = 0
+                for n, fmt in enumerate(info["formats"]):
+                    if track["video"] \
+                    or "audio" in fmt["format"]:
+                        fmtindex = n
+                playlist.write(info["formats"][fmtindex]["url"])
                 playlist.write("\n")
     subprocess.call(["mplayer", "-playlist", playlistfilename])
