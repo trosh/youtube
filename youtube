@@ -7,16 +7,20 @@ import re
 from html.parser import HTMLParser
 import youtube_dl
 import subprocess
+import os
+
+defaultplayspecstr = "1"
+defaultplaylistspecstr = "1_10"
 
 def help():
-    print('''usage: {} <query> [(-a|--audio|-v|--video)] [(-p|--play) [<playspec>]]
+    print('''usage: {executablename} <query> [(-a|--audio|-v|--video)] [(-p|--play) [<playspec>]]
 Search and play for videos/tracks/playlists in YouTube and SoundCloud
 
 Default format is audio
 
 PLAYSPEC
     Syntax: <element>[,<element>...]
-    Default: 1-10
+    Default: {defaultplayspecstr}
     Example: 1,2a,3-5v,6:3_,7a:1.3.5
 
 ELEMENT
@@ -31,13 +35,16 @@ ELEMENT
 
 PLAYLISTSPEC
     Syntax: (a|all|<subrange>[.<subrange>])
-    Default: 1_10
+    Default: {defaultplaylistspecstr}
     Example: 1.3_5.7_   # Sub-elements 1,3,4,5,7,8,...
 
 SUBRANGE
     Syntax: <subindex>[_<subindex>]
 
-'''.format(argv[0]))
+'''.format(
+        executablename=argv[0],
+        defaultplayspecstr=defaultplayspecstr,
+        defaultplaylistspecstr=defaultplaylistspecstr))
     sys.exit(0)
 
 if len(argv) < 2:
@@ -57,7 +64,7 @@ while len(argv) > 1:
         elif s in ["-p", "--play"]:
             play = True
             if len(argv) < 3 or argv[2][0] == "-":
-                playspecstr = "1-10"
+                playspecstr = defaultplayspecstr
             else:
                 playspecstr = argv[2]
                 argv[2:] = argv[3:]
@@ -90,28 +97,48 @@ if not usedlastsearch:
         lastsearch.write(query + "\n")
         lastsearch.write(youtube)
 
-ytcutpatt = re.compile("<a href=\"/watch")
-youtube = ytcutpatt.sub("\n", youtube)
+ytcutpatt = re.compile("href=\"/(watch|playlist)")
+youtube = ytcutpatt.sub("\nwatch", youtube)
 
 htmlparser = HTMLParser()
 urlpatt = re.compile("[^\"]*")
+vpatt = re.compile("\\?v=[^;]*;")
 titlepatt = re.compile("title=\"[^\"]*")
 urls = []
 titles = []
 isplaylist = []
-for line in youtube.split("\n", 14)[1:]:
-    url = "http://www.youtube.com/watch" + \
-          urlpatt.match(line)[0]
+for line in youtube.split("\n", 20)[1:]:
+    if "yt-pl-thumb-link" in line:
+        continue
+    url = "http://www.youtube.com/" \
+        + urlpatt.match(line)[0]
+    ispl = ";list=" in url
+    if ispl:
+        url = vpatt.sub("?", url)
     if url not in urls:
         urls.append(url)
-        isplaylist.append(";list=" in url)
-        title = titlepatt.search(line, 100)[0][7:]
-        title = htmlparser.unescape(title)
-        titles.append(title)
+        isplaylist.append(ispl)
+        titlematch = titlepatt.search(line)
+        if titlematch is not None:
+            title = titlematch[0][7:]
+            title = htmlparser.unescape(title)
+            titles.append(title)
+        else:
+            titles.append("")
 
 if not play:
-    for n, title in enumerate(titles):
-        print("{} - {}".format(n+1, title))
+    for n, url in enumerate(urls):
+        ydl_opts = {
+                "simulate": True,
+                "quiet": True
+            }
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if "entries" in info:
+                for m, entry in enumerate(info["entries"][:10]):
+                    print("{}.{} - {}".format(n, m, entry["title"]))
+            else:
+                print("{} - {}".format(n, info["title"]))
 else:
     playspec = []
     for rng in playspecstr.split(","):
@@ -144,7 +171,7 @@ else:
                     "video": subvideo,
                     })
                 if isplaylist[index]:
-                    playspec[-1]["playlist"] = "1-10"
+                    playspec[-1]["playlist"] = defaultplaylistspecstr
         else:
             rngl = rng.split("-", 2)
             start = int(rngl[0]) - 1
@@ -156,7 +183,7 @@ else:
             if len(right) == 0:
                 end = len(urls)
             else:
-                end = int(right)
+                end = min(len(urls), int(right))
             for index in range(start, end):
                 playspec.append({
                     "id": index,
@@ -166,18 +193,36 @@ else:
                     playspec[-1]["playlist"] = "1-10"
     with open(playlistfilename, "w") as playlist:
         for track in playspec:
-            print(titles[track["id"]])
             ydl_opts = {
                     "simulate": True,
                     "quiet": True
                 }
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(urls[track["id"]], download=False)
-                fmtindex = 0
-                for n, fmt in enumerate(info["formats"]):
-                    if track["video"] \
-                    or "audio" in fmt["format"]:
-                        fmtindex = n
-                playlist.write(info["formats"][fmtindex]["url"])
-                playlist.write("\n")
-    subprocess.call(["mplayer", "-playlist", playlistfilename])
+                print(info["title"])
+                if "entries" in info:
+                    for entry in info["entries"]:
+                        print(entry["title"])
+                        fmtindex = 0
+                        for n, fmt in enumerate(entry["formats"]):
+                            if track["video"] \
+                            or "audio" in fmt["format"]:
+                                fmtindex = n
+                        playlist.write(entry["formats"][fmtindex]["url"])
+                        playlist.write("\n")
+                else:
+                    fmtindex = 0
+                    for n, fmt in enumerate(info["formats"]):
+                        if track["video"] \
+                        or "audio" in fmt["format"]:
+                            fmtindex = n
+                    playlist.write(info["formats"][fmtindex]["url"])
+                    playlist.write("\n")
+    print('''
+    [←] seek [→]    [9] volume [0]      [<] navigate [>|⏎ ]
+    [↓] SEEK [↑]    [space] pause       [q] quit
+''')
+    with open(os.devnull, "w") as devnull:
+        subprocess.call(
+            ["mplayer", "-playlist", playlistfilename, "-really-quiet"],
+            stderr=devnull)
