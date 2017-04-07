@@ -103,9 +103,7 @@ youtube = ytcutpatt.sub("\nwatch", youtube)
 htmlparser = HTMLParser()
 urlpatt = re.compile("[^\"]*")
 vpatt = re.compile("\\?v=[^;]*;")
-titlepatt = re.compile("title=\"[^\"]*")
 urls = []
-titles = []
 isplaylist = []
 for line in youtube.split("\n", 20)[1:]:
     if "yt-pl-thumb-link" in line:
@@ -118,13 +116,6 @@ for line in youtube.split("\n", 20)[1:]:
     if url not in urls:
         urls.append(url)
         isplaylist.append(ispl)
-        titlematch = titlepatt.search(line)
-        if titlematch is not None:
-            title = titlematch[0][7:]
-            title = htmlparser.unescape(title)
-            titles.append(title)
-        else:
-            titles.append("")
 
 if not play:
     for n, url in enumerate(urls):
@@ -136,9 +127,9 @@ if not play:
             info = ydl.extract_info(url, download=False)
             if "entries" in info:
                 for m, entry in enumerate(info["entries"][:10]):
-                    print("{}.{} - {}".format(n, m, entry["title"]))
+                    print("{}.{} - {}".format(n+1, m+1, entry["title"]))
             else:
-                print("{} - {}".format(n, info["title"]))
+                print("{} - {}".format(n+1, info["title"]))
 else:
     playspec = []
     for rng in playspecstr.split(","):
