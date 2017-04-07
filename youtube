@@ -109,7 +109,7 @@ for line in youtube.split("\n", 20)[1:]:
     if "yt-pl-thumb-link" in line:
         continue
     url = "http://www.youtube.com/" \
-        + urlpatt.match(line)[0]
+        + urlpatt.match(line).group()
     ispl = ";list=" in url
     if ispl:
         url = vpatt.sub("?", url)
