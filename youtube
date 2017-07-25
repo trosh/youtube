@@ -83,11 +83,14 @@ playlistfilename = "/tmp/playlist-youtube"
 
 usedlastsearch = False
 if play:
-    with open(lastsearchfilename, "r") as lastsearch:
-        lastquery = lastsearch.readline()
-        if lastquery == query + "\n":
-            usedlastsearch = True
-            youtube = lastsearch.read()
+    try:
+        with open(lastsearchfilename, "r") as lastsearch:
+            lastquery = lastsearch.readline()
+            if lastquery == query + "\n":
+                usedlastsearch = True
+                youtube = lastsearch.read()
+    except FileNotFoundError:
+        pass
 
 if not usedlastsearch:
     youtubeprefix = "https://www.youtube.com/results?search_query="
