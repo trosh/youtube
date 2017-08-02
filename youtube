@@ -12,7 +12,7 @@ defaultplayspecstr = "1"
 defaultplaylistspecstr = "1_10"
 
 def help():
-    print('''usage: {executablename} <query> [(-a|--audio|-v|--video)] [(-p|--play) [<playspec>]]
+    print('''usage: {executablename} <query> [(-a|--audio|-v|--video)] [(-p|--play) [<playspec>]] [(-u|--url)]
 Search and play for videos/tracks/playlists in YouTube and SoundCloud
 
 Default format is audio
@@ -53,6 +53,7 @@ query = []
 video = False
 play = False
 playspec = None
+clipurl = False
 
 while len(argv) > 1:
     s = argv[1]
@@ -60,6 +61,7 @@ while len(argv) > 1:
         if   s in ["-h", "--help"]: help()
         elif s in ["-a", "--audio"]: video = False
         elif s in ["-v", "--video"]: video = True
+        elif s in ["-u", "--url"]: clipurl = True
         elif s in ["-p", "--play"]:
             play = True
             if len(argv) < 3 or argv[2][0] == "-":
@@ -195,7 +197,12 @@ else:
                 }
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(urls[track["id"]], download=False)
-                print(info["title"])
+                print(info["title"], urls[track["id"]])
+                if clipurl:
+                    pipe = subprocess.Popen(
+                        ["xclip", "-selection", "-clipboard"],
+                        stdin=subprocess.PIPE)
+                    pipe.communicate(input=str.encode(urls[track["id"]]))
                 if "entries" in info:
                     for entry in info["entries"]:
                         print(entry["title"])
