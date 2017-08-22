@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+
+from sys import argv, stdin, exit
+import os
+import youtube_dl
+import subprocess
+from queue import Queue
+from threading import Thread, Lock
+
+# Default spec strings
+playspecstr = "1"
+playlistspecstr = "1_10"
+
+def help():
+    print('''usage: {executablename} [(-a|--audio|-v|--video)] [<playspec>] [(-u|--url)]
+Translate youtube links to streamable playlist according to playspec
+Can be piped to "mplayer -playlist -" for example
+
+Default format is audio
+
+PLAYSPEC
+    Syntax: <element>[,<element>...]
+    Default: {playspecstr}
+    Example: 1,2a,3-5v,6:3_,7a:1.3.5
+
+ELEMENT
+    Syntax: <index>[(a|v)]
+         or <index>-[<index>][(a|v)]
+         or <index>[(a|v)][:<PLAYLISTINDEX>]
+    a or v override global format
+    Examples:
+        4           # 4th element
+        5-7a        # Audio for elements 5,6,7 (track/video/playlist[1-10])
+        10v:2_4.6_8 # Video for playlist[2-4,6-8] at 10th element
+
+PLAYLISTSPEC
+    Syntax: (a|all|<subrange>[.<subrange>])
+    Default: {playlistspecstr}
+    Example: 1.3_5.7_   # Sub-elements 1,3,4,5,7,8,...
+
+SUBRANGE
+    Syntax: <subindex>[_<subindex>]
+
+'''.format(
+        executablename=argv[0],
+        playspecstr=playspecstr,
+        playlistspecstr=playlistspecstr))
+    exit(0)
+
+video = False
+clipurl = False
+
+while len(argv) > 1:
+    s = argv[1]
+    if s[0] == "-":
+        if   s in ["-h", "--help"]: help()
+        elif s in ["-a", "--audio"]: video = False
+        elif s in ["-v", "--video"]: video = True
+        elif s in ["-u", "--url"]: clipurl = True
+        else:
+            help()
+    else:
+        playspecstr = s
+    del argv[0]
+
+urls = []
+for line in stdin:
+    urls.append(line.strip())
+
+playspec = []
+for rng in playspecstr.split(","):
+    if "-" not in rng: # Single object
+        if ":" in rng: # Playlist spec
+            splt = rng.split(":", 2)
+            left = splt[0]
+            subvideo = video # Default A/V
+            if left[-1] in "av":
+                subvideo = index[-1] == "v" # Explicit A/V
+                left = left[:-1]
+            index = int(left) - 1
+            #if not isplaylist[index]:
+            #    print("index={} is not a playlist".format(index))
+            #    exit(1)
+            playlistspec = splt[1].replace(".", ",").replace("_", "-")
+            playspec.append({
+                "id": index,
+                "video": subvideo,
+                "playlist": playlistspec
+                })
+        else:
+            subvideo = video
+            if rng[-1] in "av":
+                subvideo = rng[-1] == "v"
+                rng = rng[:-1]
+            index = int(rng) - 1
+            playspec.append({
+                "id": index,
+                "video": subvideo,
+                })
+            #if isplaylist[index]:
+            #    playspec[-1]["playlist"] = playlistspecstr
+    else: # Range
+        rngl = rng.split("-", 2)
+        start = int(rngl[0]) - 1
+        right = rngl[1]
+        subvideo = video
+        if right[-1] in "av":
+            subvideo = right[-1] == "v"
+            right = right[:-1]
+        if len(right) == 0:
+            end = len(urls)
+        else:
+            end = min(len(urls), int(right))
+        for index in range(start, end):
+            playspec.append({
+                "id": index,
+                "video": subvideo
+                })
+            #if isplaylist[index]:
+            #    playspec[-1]["playlist"] = "1-10"
+
+lock = Lock()
+output = []
+for i in range(len(playspec)):
+    output.append(None)
+outputed = 0
+
+def worker():
+    global output, outputed
+    ydl_opts = {
+        "simulate": True,
+        "quiet": True
+        }
+    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        while True:
+            ret = q.get()
+            if ret is None:
+                return
+            n, url = ret
+            info = ydl.extract_info(url, download=False)
+            if clipurl:
+                pipe = subprocess.Popen(
+                    ["xclip", "-selection", "-clipboard"],
+                    stdin=subprocess.PIPE)
+                pipe.communicate(input=str.encode(url))
+            with lock:
+                if "entries" in info:
+                    output[n] = ""
+                    for entry in info["entries"]:
+                        for fmt in entry["formats"]:
+                            if track["video"] \
+                            or "audio" in fmt["format"]:
+                                chosenfmt = fmt
+                        output[n] += chosenfmt["url"] + "\n"
+                else:
+                    for fmt in info["formats"]:
+                        if track["video"] \
+                        or "audio" in fmt["format"]:
+                            chosenfmt = fmt
+                    output[n] = chosenfmt["url"] + "\n"
+                if n == outputed:
+                    for i in range(outputed, len(playspec)):
+                        if output[i] is None:
+                            outputed = i
+                            break
+                        print(output[i], end="")
+            q.task_done()
+
+q = Queue()
+n_threads = 4
+threads = []
+for i in range(n_threads):
+    t = Thread(target=worker)
+    t.start()
+    threads.append(t)
+
+for n, track in enumerate(playspec):
+    q.put((n, urls[track["id"]]))
+
+q.join()
+
+for i in range(n_threads):
+    q.put(None)
+for t in threads:
+    t.join()
