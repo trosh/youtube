@@ -35,14 +35,14 @@ maxelem = 20
 lastsearchfilename = "/tmp/last-youtube-search"
 
 usedlastsearch = False
-with open(lastsearchfilename, "r") as lastsearch:
-    try:
+try:
+    with open(lastsearchfilename, "r") as lastsearch:
         lastquery = lastsearch.readline()
         if lastquery == query + "\n":
             usedlastsearch = True
             youtube = lastsearch.read()
-    except FileNotFoundError:
-        pass
+except FileNotFoundError:
+    pass
 
 if not usedlastsearch:
     youtubeprefix = "https://www.youtube.com/results?search_query="
