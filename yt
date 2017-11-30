@@ -99,6 +99,9 @@ def worker():
                 info = ydl.extract_info(url, download=False)
             except KeyboardInterrupt:
                 exit(1) # Quiet interrupt
+            except youtube_dl.DownloadError:
+                q.task_done()
+                continue
             with lock:
                 if "entries" in info:
                     output[n] = ""
