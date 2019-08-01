@@ -16,15 +16,18 @@ Can be piped to yu
 
 if len(argv) < 2:
     help()
+    exit(1)
 
 query = []
 
 while len(argv) > 1:
     s = argv[1]
     if s[0] == "-":
-        if   s in ["-h", "--help"]: help()
+        if s in ["-h", "--help"]:
+            help()
         else:
             help()
+            exit(1)
     else:
         query.append(s)
     del argv[0]
